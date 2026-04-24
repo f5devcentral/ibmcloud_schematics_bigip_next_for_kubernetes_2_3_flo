@@ -1,3 +1,13 @@
+# ============================================================
+# Root Terraform Variables
+# F5 BNK Orchestrator for existing ROKS cluster
+# ============================================================
+
+
+# ============================================================
+# IBM Cloud Variables
+# ============================================================
+
 variable "ibmcloud_api_key" {
   description = "IBM Cloud API Key"
   type        = string
@@ -13,18 +23,26 @@ variable "ibmcloud_cluster_region" {
 variable "ibmcloud_resource_group" {
   description = "IBM Cloud Resource Group name (leave empty to use account default)"
   type        = string
-  default     = ""
+  default     = "default"
 }
 
+# ============================================================
+# Cluster Inputs
+# ============================================================
+
 variable "cluster_name_or_id" {
-  description = "Name or ID of the existing OpenShift ROKS cluster"
+  description = "Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto"
   type        = string
 
   validation {
     condition     = length(var.cluster_name_or_id) > 0
-    error_message = "cluster_name_or_id cannot be empty."
+    error_message = "cluster_name_or_id cannot be empty — an existing cluster is required."
   }
 }
+
+# ============================================================
+# FAR / Registry Configuration
+# ============================================================
 
 variable "far_repo_url" {
   description = "FAR Repository URL for Docker and Helm registry"
@@ -33,9 +51,20 @@ variable "far_repo_url" {
 }
 
 variable "f5_bigip_k8s_manifest_version" {
-  description = "Version of the f5-bigip-k8s-manifest chart"
+  description = "Version of the f5-bigip-k8s-manifest chart (FLO/CIS versions are extracted from this)"
   type        = string
   default     = "2.3.0-bnpp-ehf-2-3.2598.3-0.0.17"
+}
+
+# ============================================================
+# COS Bucket Configuration
+# Optional — fetch FAR auth key and JWT from IBM Cloud Object Storage
+# ============================================================
+
+variable "use_cos_bucket" {
+  description = "Fetch FAR auth key and JWT from IBM Cloud Object Storage instead of local variables"
+  type        = bool
+  default     = true
 }
 
 variable "ibmcloud_cos_bucket_region" {
@@ -68,11 +97,9 @@ variable "f5_cne_subscription_jwt_file" {
   default     = "trial.jwt"
 }
 
-variable "cert_manager_namespace" {
-  description = "Namespace where cert-manager is installed"
-  type        = string
-  default     = "cert-manager"
-}
+# ============================================================
+# FLO Namespace Configuration
+# ============================================================
 
 variable "flo_namespace" {
   description = "Namespace for F5 Lifecycle Operator"
@@ -85,6 +112,16 @@ variable "utils_namespace" {
   type        = string
   default     = "f5-utils"
 }
+
+variable "cert_manager_namespace" {
+  description = "Kubernetes namespace for cert-manager - used by cert-manager, flo modules"
+  type        = string
+  default     = "cert-manager"
+}
+
+# ============================================================
+# BIG-IP CIS Configuration
+# ============================================================
 
 variable "bigip_username" {
   description = "BIG-IP username for CIS controller login"

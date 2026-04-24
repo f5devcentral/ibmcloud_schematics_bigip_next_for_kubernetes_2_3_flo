@@ -1,3 +1,31 @@
+# ============================================================
+# Root Terraform Outputs
+# F5 BNK Orchestrator for existing ROKS cluster
+# ============================================================
+
+# ============================================================
+# Cluster Info (from data source lookup)
+# ============================================================
+
+output "cluster_id" {
+  description = "ID of the target OpenShift cluster"
+  value       = data.ibm_container_vpc_cluster.cluster.id
+}
+
+output "cluster_name" {
+  description = "Name of the target OpenShift cluster"
+  value       = data.ibm_container_vpc_cluster.cluster.name
+}
+
+output "cluster_crn" {
+  description = "CRN of the target OpenShift cluster"
+  value       = data.ibm_container_vpc_cluster.cluster.crn
+}
+
+# ============================================================
+# FLO Outputs
+# ============================================================
+
 output "flo_release_name" {
   description = "Name of the f5-lifecycle-operator Helm release"
   value       = module.flo.flo_release_name
@@ -19,24 +47,8 @@ output "extracted_flo_version" {
 }
 
 output "trusted_profile_id" {
-  description = "IBM IAM Trusted Profile ID — pass to the cneinstance project as cneinstance_ibm_trusted_profile_id"
+  description = "IBM IAM Trusted Profile ID created for the CNE controller service account"
   value       = module.flo.trusted_profile_id
-}
-
-output "cluster_issuer_name" {
-  description = "Name of the CA ClusterIssuer — pass to the cneinstance project as cluster_issuer_name"
-  value       = module.flo.cluster_issuer_name
-}
-
-output "cneinstance_network_attachments" {
-  description = "Network attachment names — pass to the cneinstance project as cneinstance_network_attachments"
-  value       = module.flo.cneinstance_network_attachments
-}
-
-output "cos_jwt_token" {
-  description = "JWT token fetched from COS — pass to the license project as jwt_token"
-  value       = module.flo.cos_jwt_token
-  sensitive   = true
 }
 
 output "flo_pod_deployment_status" {
