@@ -42,3 +42,7 @@ output "flo_cluster_issuer_name" {
   value       = module.flo.cluster_issuer_name
 }
 
+output "cneinstance_network_attachments" {
+  description = "Network attachments configured for CNEInstance"
+  value       = module.flo.cneinstance_network_attachments : []
+}
