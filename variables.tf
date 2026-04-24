@@ -107,7 +107,7 @@ variable "flo_namespace" {
   default     = "f5-bnk"
 }
 
-variable "utils_namespace" {
+variable "flo_utils_namespace" {
   description = "Namespace for F5 utility components"
   type        = string
   default     = "f5-utils"
