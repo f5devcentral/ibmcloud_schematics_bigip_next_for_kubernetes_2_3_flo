@@ -55,3 +55,8 @@ output "flo_pod_deployment_status" {
   description = "FLO pod deployment status"
   value       = module.flo.flo_pod_deployment_status
 }
+
+output "cluster_issuer_name" {
+  description = "mTLS certificate issuer name"
+  value       = module.flo.cluster_issuer_name
+}
