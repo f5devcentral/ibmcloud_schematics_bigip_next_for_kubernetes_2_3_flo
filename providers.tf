@@ -23,7 +23,3 @@ provider "helm" {
     cluster_ca_certificate = try(base64decode(data.ibm_container_cluster_config.cluster_config.ca_certificate), null)
   }
 }
-
-provider "null" {}
-provider "local" {}
-provider "http" {}
