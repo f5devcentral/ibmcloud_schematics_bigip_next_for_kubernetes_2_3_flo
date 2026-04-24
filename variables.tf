@@ -30,13 +30,13 @@ variable "ibmcloud_resource_group" {
 # Cluster Inputs
 # ============================================================
 
-variable "cluster_name_or_id" {
+variable "roks_cluster_name_or_id" {
   description = "Name or ID of the existing OpenShift ROKS cluster to deploy BNK onto"
   type        = string
 
   validation {
-    condition     = length(var.cluster_name_or_id) > 0
-    error_message = "cluster_name_or_id cannot be empty — an existing cluster is required."
+    condition     = length(var.roks_cluster_name_or_id) > 0
+    error_message = "roks_cluster_name_or_id cannot be empty — an existing cluster is required."
   }
 }
 

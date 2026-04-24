@@ -9,7 +9,7 @@ ibmcloud_resource_group = ""
 # Target Cluster (required)
 # Provide the name or ID of the existing ROKS cluster
 # ============================================================
-cluster_name_or_id = "my-openshift-cluster"
+roks_cluster_name_or_id = "my-openshift-cluster"
 
 # ============================================================
 # FAR / Registry

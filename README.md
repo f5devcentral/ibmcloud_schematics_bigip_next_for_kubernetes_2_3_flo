@@ -20,7 +20,7 @@ This workspace deploys BNK onto an existing cluster. Cluster VPC information is 
 
 | Variable | Description | Required | Example |
 | -------- | ----------- | -------- | ------- |
-| `cluster_name_or_id` | Name or ID of the existing OpenShift ROKS cluster | REQUIRED | `my-openshift-cluster` |
+| `roks_cluster_name_or_id` | Name or ID of the existing OpenShift ROKS cluster | REQUIRED | `my-openshift-cluster` |
 
 Get your existing cluster name or ID:
 ```bash
@@ -236,7 +236,7 @@ ibmcloud_cluster_region = "ca-tor"
 ibmcloud_resource_group = ""
 
 # Target Cluster (required)
-cluster_name_or_id = "my-openshift-cluster"
+roks_cluster_name_or_id = "my-openshift-cluster"
 
 # FAR Registry
 far_repo_url                  = "repo.f5.com"

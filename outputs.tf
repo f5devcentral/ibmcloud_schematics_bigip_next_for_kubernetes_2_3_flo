@@ -4,25 +4,6 @@
 # ============================================================
 
 # ============================================================
-# Cluster Info (from data source lookup)
-# ============================================================
-
-output "cluster_id" {
-  description = "ID of the target OpenShift cluster"
-  value       = data.ibm_container_vpc_cluster.cluster.id
-}
-
-output "cluster_name" {
-  description = "Name of the target OpenShift cluster"
-  value       = data.ibm_container_vpc_cluster.cluster.name
-}
-
-output "cluster_crn" {
-  description = "CRN of the target OpenShift cluster"
-  value       = data.ibm_container_vpc_cluster.cluster.crn
-}
-
-# ============================================================
 # FLO Outputs
 # ============================================================
 
@@ -41,12 +22,12 @@ output "flo_version" {
   value       = module.flo.flo_version
 }
 
-output "extracted_flo_version" {
+output "flo_extracted_flo_version" {
   description = "FLO version extracted from f5-bigip-k8s-manifest"
   value       = module.flo.extracted_flo_version
 }
 
-output "trusted_profile_id" {
+output "flo_trusted_profile_id" {
   description = "IBM IAM Trusted Profile ID created for the CNE controller service account"
   value       = module.flo.trusted_profile_id
 }
@@ -56,7 +37,8 @@ output "flo_pod_deployment_status" {
   value       = module.flo.flo_pod_deployment_status
 }
 
-output "cluster_issuer_name" {
+output "flo_cluster_issuer_name" {
   description = "mTLS certificate issuer name"
   value       = module.flo.cluster_issuer_name
 }
+

@@ -116,12 +116,6 @@ output "flo_pod_deployment_status" {
   } : null
 }
 
-output "cos_jwt_token" {
-  description = "JWT token fetched from COS bucket (empty when use_cos_bucket = false)"
-  value       = var.enabled && var.use_cos_bucket ? local.cos_jwt_token : ""
-  sensitive   = true
-}
-
 output "trusted_profile_id" {
   description = "ID of the IBM IAM trusted profile created for the CNE controller service account"
   value       = local.global_enabled ? ibm_iam_trusted_profile.cne_controller[0].id : null

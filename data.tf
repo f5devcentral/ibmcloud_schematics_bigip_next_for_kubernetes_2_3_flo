@@ -14,7 +14,7 @@ data "ibm_resource_group" "resource_group" {
 
 # Look up the existing OpenShift cluster
 data "ibm_container_vpc_cluster" "cluster" {
-  name              = var.cluster_name_or_id
+  name              = var.roks_cluster_name_or_id
   resource_group_id = data.ibm_resource_group.resource_group.id
 }
 

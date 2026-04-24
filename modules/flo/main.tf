@@ -1,11 +1,10 @@
 locals {
   global_enabled = var.enabled
-  
+
   far_registry_hostname = replace(var.far_repo_url, "https://", "")
   image_repository      = "${local.far_registry_hostname}/images"
   far_service_account_b64 = local.global_enabled && var.use_cos_bucket ? data.local_file.cne_pull_64_json_file[0].content : ""
   far_auth_value = base64encode("_json_key_base64:${local.far_service_account_b64}")
-  cos_jwt_token = local.global_enabled && var.use_cos_bucket ? trimspace(data.http.jwt_download[0].response_body) : var.jwt_token
   far_docker_config_json = replace(
     jsonencode({
       auths = {
@@ -17,7 +16,7 @@ locals {
     ":",
     ": "
   )
-  
+
   nad_name_computed = "ens3-ipvlan-l2"
 
   nad_config_host_device = jsonencode({
@@ -150,24 +149,6 @@ data "ibm_cos_bucket" "cos_bucket" {
   resource_instance_id = data.ibm_resource_instance.cos_instance[0].id
   bucket_region        = var.ibmcloud_cos_bucket_region
   bucket_type          = "region_location"
-}
-
-data "ibm_cos_bucket_object" "f5_cne_subscription_jwt_object" {
-  count           = local.global_enabled && var.use_cos_bucket ? 1 : 0
-  bucket_crn      = data.ibm_cos_bucket.cos_bucket[0].crn
-  bucket_location = data.ibm_cos_bucket.cos_bucket[0].bucket_region
-  key             = var.f5_cne_subscription_jwt_file
-}
-
-# Download JWT file via COS S3-compatible REST API (body field may be empty for binary content_type)
-data "http" "jwt_download" {
-  count  = local.global_enabled && var.use_cos_bucket ? 1 : 0
-  url    = "https://s3.${var.ibmcloud_cos_bucket_region}.cloud-object-storage.appdomain.cloud/${var.ibmcloud_resources_cos_bucket}/${var.f5_cne_subscription_jwt_file}"
-  method = "GET"
-  request_headers = {
-    "Authorization"           = "Bearer ${jsondecode(data.http.iam_token[0].response_body).access_token}"
-    "ibm-service-instance-id" = data.ibm_resource_instance.cos_instance[0].guid
-  }
 }
 
 # Exchange API key for a short-lived IAM bearer token
@@ -492,7 +473,7 @@ resource "kubernetes_secret" "far_secret_utils" {
 resource "helm_release" "f5_lifecycle_operator" {
   provider = helm
   count    = local.global_enabled ? 1 : 0
-  
+
   name                = "flo"
   repository          = "oci://${replace(var.far_repo_url, "https://", "")}/charts"
   chart               = "f5-lifecycle-operator"
@@ -502,7 +483,7 @@ resource "helm_release" "f5_lifecycle_operator" {
   namespace           = var.flo_namespace
   wait                = false
   timeout             = 300
-  
+
   values = [yamlencode(local.flo_helm_values)]
 
   depends_on = [
@@ -619,11 +600,11 @@ resource "time_sleep" "wait_for_flo_scc_policies" {
 # Query pods in FLO namespace after SCC policies applied
 data "kubernetes_resources" "flo_namespace_pods" {
   count = local.global_enabled ? 1 : 0
-  
+
   api_version = "v1"
   kind        = "Pod"
   namespace   = var.flo_namespace
-  
+
   depends_on = [time_sleep.wait_for_flo_scc_policies[0]]
 }
 
@@ -728,7 +709,7 @@ resource "kubernetes_manifest" "node_labeler_job" {
     }
   }
 
-  depends_on = [
+  depends_on = [kubernetes_manifest.network_attachment_definition,
     helm_release.f5_lifecycle_operator[0],
     kubernetes_manifest.node_labeler_binding[0]
   ]
