@@ -68,7 +68,7 @@ module "flo" {
   # FLO Configuration
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
   flo_namespace                 = var.flo_namespace
-  utils_namespace               = var.utils_namespace
+  utils_namespace               = var.flo_utils_namespace
 
   # BIG-IP CIS Configuration
   bigip_username = var.bigip_username

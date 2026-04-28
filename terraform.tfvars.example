@@ -31,7 +31,7 @@ f5_cne_subscription_jwt_file  = "trial.jwt"
 # ============================================================
 cert_manager_namespace = "cert-manager"
 flo_namespace          = "f5-bnk"
-utils_namespace        = "f5-utils"
+flo_utils_namespace    = "f5-utils"
 
 # ============================================================
 # BIG-IP CIS Configuration
