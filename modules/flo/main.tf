@@ -354,22 +354,27 @@ resource "null_resource" "extract_flo_version" {
     command = <<-EOT
       set -e
       # Ensure Helm >= 3.8.0 is available (helm registry requires 3.8+).
-      # Schematics runtime ships an older version that lacks the registry subcommand.
+      # Schematics runtime ships an older version. Download directly for linux/amd64
+      # instead of using get-helm-3, which requires uname (not available in Schematics).
       HELM_MIN="3.8.0"
+      HELM_BIN="helm"
       helm_ok() {
         local v
         v=$(helm version --short 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) || return 1
-        printf '%s
-%s
-' "$HELM_MIN" "$v" | sort -V -C
+        printf '%s\n%s\n' "$HELM_MIN" "$v" | sort -V -C
       }
       if ! helm_ok; then
-        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        HELM_VERSION="3.17.2"
+        mkdir -p /tmp/helm-install
+        curl -fsSL -o /tmp/helm-install/helm.tar.gz \
+          "https://get.helm.sh/helm-v$HELM_VERSION-linux-amd64.tar.gz"
+        tar -xzf /tmp/helm-install/helm.tar.gz -C /tmp/helm-install
+        HELM_BIN="/tmp/helm-install/linux-amd64/helm"
       fi
       mkdir -p ${var.manifest_download_dir}
       cd ${var.manifest_download_dir}
-      echo "${local.far_service_account_b64}" | helm registry login -u _json_key_base64 --password-stdin ${replace(var.far_repo_url, "https://", "")}
-      helm pull oci://${replace(var.far_repo_url, "https://", "")}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
+      echo "${local.far_service_account_b64}" | $HELM_BIN registry login -u _json_key_base64 --password-stdin ${replace(var.far_repo_url, "https://", "")}
+      $HELM_BIN pull oci://${replace(var.far_repo_url, "https://", "")}/release/f5-bigip-k8s-manifest --version "${var.f5_bigip_k8s_manifest_version}" -d .
       tar -xzf f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.tgz
       FLO_VERSION=$(grep -A 1 "charts/f5-lifecycle-operator" f5-bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}/bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml | grep "version:" | awk '{print $2}' | tr -d '"' | tr -d "'")
       echo "$FLO_VERSION" > ${var.manifest_download_dir}/flo-version.txt
