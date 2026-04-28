@@ -353,6 +353,19 @@ resource "null_resource" "extract_flo_version" {
   provisioner "local-exec" {
     command = <<-EOT
       set -e
+      # Ensure Helm >= 3.8.0 is available (helm registry requires 3.8+).
+      # Schematics runtime ships an older version that lacks the registry subcommand.
+      HELM_MIN="3.8.0"
+      helm_ok() {
+        local v
+        v=$(helm version --short 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) || return 1
+        printf '%s
+%s
+' "$HELM_MIN" "$v" | sort -V -C
+      }
+      if ! helm_ok; then
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      fi
       mkdir -p ${var.manifest_download_dir}
       cd ${var.manifest_download_dir}
       echo "${local.far_service_account_b64}" | helm registry login -u _json_key_base64 --password-stdin ${replace(var.far_repo_url, "https://", "")}
