@@ -67,6 +67,17 @@ KEY_OUTPUTS = [
     "cneinstance_network_attachments",
 ]
 
+OUTPUT_METADATA = [
+    {"name": "flo_release_name",               "description": "Name of the f5-lifecycle-operator Helm release"},
+    {"name": "flo_namespace",                  "description": "Namespace where f5-lifecycle-operator is installed"},
+    {"name": "flo_version",                    "description": "Installed f5-lifecycle-operator version"},
+    {"name": "flo_extracted_flo_version",      "description": "FLO version extracted from f5-bigip-k8s-manifest"},
+    {"name": "flo_trusted_profile_id",         "description": "IBM IAM Trusted Profile ID created for the CNE controller service account"},
+    {"name": "flo_pod_deployment_status",      "description": "FLO pod deployment status"},
+    {"name": "flo_cluster_issuer_name",        "description": "mTLS certificate issuer name"},
+    {"name": "cneinstance_network_attachments","description": "Network attachments configured for CNEInstance"},
+]
+
 
 # ── Low-level helpers ─────────────────────────────────────────────────────────
 
@@ -151,6 +162,7 @@ def build_workspace_json(variables, ts_label, branch="main"):
             "folder": ".",
             "type": "terraform_v1.5",
             "variablestore": variables,
+            "output_values_metadata": OUTPUT_METADATA,
         }],
     }
     Path(WS_JSON_PATH).write_text(json.dumps(ws, indent=2))
