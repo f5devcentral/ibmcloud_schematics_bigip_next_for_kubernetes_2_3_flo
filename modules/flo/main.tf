@@ -205,6 +205,29 @@ locals {
   far_extracted_filename = var.use_cos_bucket && local.global_enabled ? trimspace(data.local_file.far_extracted_filename[0].content) : ""
 }
 
+locals {
+  # NAD config strings JSON-escaped for embedding as string values in curl payloads
+  nad_config_ipvlan_esc      = replace(local.nad_config_ipvlan, "\"", "\\\"")
+  nad_config_host_device_esc = replace(local.nad_config_host_device, "\"", "\\\"")
+  macvlan_config = jsonencode({
+    cniVersion = "0.3.1"
+    type       = "macvlan"
+    master     = "dummy0"
+    mode       = "bridge"
+    ipam = {
+      type      = "static"
+      addresses = [{ address = "192.168.1.100/24", gateway = "192.168.1.1" }]
+    }
+  })
+  macvlan_config_esc = replace(local.macvlan_config, "\"", "\\\"")
+
+  # Base64-encoded secret values — safe to embed in JSON without further escaping
+  bigip_username_b64    = base64encode(var.bigip_username)
+  bigip_password_b64    = base64encode(var.bigip_password)
+  bigip_url_b64         = base64encode(replace(var.bigip_url, "https://", ""))
+  far_docker_config_b64 = base64encode(local.far_docker_config_json)
+}
+
 data "local_file" "cne_pull_64_json_file" {
   count      = local.global_enabled && var.use_cos_bucket ? 1 : 0
   filename   = "/tmp/${local.far_extracted_filename}"
@@ -225,71 +248,69 @@ resource "kubernetes_manifest" "nad_crd" {
 }
 
 # Create NetworkAttachmentDefinition in FLO namespace using kubernetes_manifest
-resource "kubernetes_manifest" "network_attachment_definition" {
-  provider = kubernetes
-  count    = local.global_enabled ? 1 : 0
+resource "null_resource" "network_attachment_definition" {
+  count = local.global_enabled ? 1 : 0
 
-  manifest = {
-    apiVersion = "k8s.cni.cncf.io/v1"
-    kind       = "NetworkAttachmentDefinition"
-    metadata = {
-      name      = local.nad_name_computed
-      namespace = var.flo_namespace
-    }
-    spec = {
-      config = var.nad_cni_type == "host-device" ? local.nad_config_host_device : local.nad_config_ipvlan
-    }
+  triggers = {
+    name      = local.nad_name_computed
+    namespace = var.flo_namespace
+    host      = var.kube_host
+    token     = var.kube_token
   }
 
-  field_manager {
-    name            = "terraform"
-    force_conflicts = true
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/apis/k8s.cni.cncf.io/v1/namespaces/${var.flo_namespace}/network-attachment-definitions/${local.nad_name_computed}?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"k8s.cni.cncf.io/v1","kind":"NetworkAttachmentDefinition","metadata":{"name":"${local.nad_name_computed}","namespace":"${var.flo_namespace}"},"spec":{"config":"${var.nad_cni_type == "host-device" ? local.nad_config_host_device_esc : local.nad_config_ipvlan_esc}"}}'
+    EOT
   }
 
-  depends_on = [
-    null_resource.flo_namespace
-  ]
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/apis/k8s.cni.cncf.io/v1/namespaces/${self.triggers.namespace}/network-attachment-definitions/${self.triggers.name}" || true
+    EOT
+  }
+
+  depends_on = [null_resource.flo_namespace]
 }
 
 # Create macvlan NetworkAttachmentDefinition
-resource "kubernetes_manifest" "macvlan_network_attachment_definition" {
-  provider = kubernetes
-  count    = local.global_enabled ? 1 : 0
+resource "null_resource" "macvlan_network_attachment_definition" {
+  count = local.global_enabled ? 1 : 0
 
-  manifest = {
-    apiVersion = "k8s.cni.cncf.io/v1"
-    kind       = "NetworkAttachmentDefinition"
-    metadata = {
-      name      = "macvlan-conf"
-      namespace = var.flo_namespace
-    }
-    spec = {
-      config = jsonencode({
-        cniVersion = "0.3.1"
-        type       = "macvlan"
-        master     = "dummy0"
-        mode       = "bridge"
-        ipam = {
-          type = "static"
-          addresses = [
-            {
-              address = "192.168.1.100/24"
-              gateway = "192.168.1.1"
-            }
-          ]
-        }
-      })
-    }
+  triggers = {
+    name      = "macvlan-conf"
+    namespace = var.flo_namespace
+    host      = var.kube_host
+    token     = var.kube_token
   }
 
-  field_manager {
-    name            = "terraform"
-    force_conflicts = true
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/apis/k8s.cni.cncf.io/v1/namespaces/${var.flo_namespace}/network-attachment-definitions/macvlan-conf?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"k8s.cni.cncf.io/v1","kind":"NetworkAttachmentDefinition","metadata":{"name":"macvlan-conf","namespace":"${var.flo_namespace}"},"spec":{"config":"${local.macvlan_config_esc}"}}'
+    EOT
   }
 
-  depends_on = [
-    null_resource.flo_namespace
-  ]
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/apis/k8s.cni.cncf.io/v1/namespaces/${self.triggers.namespace}/network-attachment-definitions/${self.triggers.name}" || true
+    EOT
+  }
+
+  depends_on = [null_resource.flo_namespace]
 }
 
 # Apply ClusterIssuer via curl server-side apply — idempotent across test runs.
@@ -322,61 +343,67 @@ resource "null_resource" "cluster_issuers" {
 }
 
 # Self-signed certificate for CA
-resource "kubernetes_manifest" "ca_certificate" {
-  provider = kubernetes
-  count    = local.global_enabled && var.cert_manager_crd_ready ? 1 : 0
+resource "null_resource" "ca_certificate" {
+  count = local.global_enabled && var.cert_manager_crd_ready ? 1 : 0
 
-  manifest = {
-    apiVersion = "cert-manager.io/v1"
-    kind       = "Certificate"
-    metadata = {
-      name      = "ext-ca"
-      namespace = var.cert_manager_namespace
-    }
-    spec = {
-      isCA       = true
-      commonName = "ext-ca"
-      secretName = "ext-ca"
-      issuerRef = {
-        name  = "selfsigned-cluster-issuer"
-        kind  = "ClusterIssuer"
-        group = "cert-manager.io"
-      }
-    }
+  triggers = {
+    host      = var.kube_host
+    token     = var.kube_token
+    namespace = var.cert_manager_namespace
   }
 
-  field_manager {
-    name            = "terraform"
-    force_conflicts = true
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/apis/cert-manager.io/v1/namespaces/${var.cert_manager_namespace}/certificates/ext-ca?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"cert-manager.io/v1","kind":"Certificate","metadata":{"name":"ext-ca","namespace":"${var.cert_manager_namespace}"},"spec":{"isCA":true,"commonName":"ext-ca","secretName":"ext-ca","issuerRef":{"name":"selfsigned-cluster-issuer","kind":"ClusterIssuer","group":"cert-manager.io"}}}'
+    EOT
   }
 
-  depends_on = [null_resource.cluster_issuers[0]]
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/apis/cert-manager.io/v1/namespaces/${self.triggers.namespace}/certificates/ext-ca" || true
+    EOT
+  }
+
+  depends_on = [null_resource.cluster_issuers]
 }
 
 # CA cluster issuer
-resource "kubernetes_manifest" "ca_cluster_issuer" {
-  provider = kubernetes
-  count    = local.global_enabled && var.cert_manager_crd_ready ? 1 : 0
+resource "null_resource" "ca_cluster_issuer" {
+  count = local.global_enabled && var.cert_manager_crd_ready ? 1 : 0
 
-  manifest = {
-    apiVersion = "cert-manager.io/v1"
-    kind       = "ClusterIssuer"
-    metadata = {
-      name = var.cluster_issuer_name
-    }
-    spec = {
-      ca = {
-        secretName = "ext-ca"
-      }
-    }
+  triggers = {
+    name  = var.cluster_issuer_name
+    host  = var.kube_host
+    token = var.kube_token
   }
 
-  field_manager {
-    name            = "terraform"
-    force_conflicts = true
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/apis/cert-manager.io/v1/clusterissuers/${var.cluster_issuer_name}?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"cert-manager.io/v1","kind":"ClusterIssuer","metadata":{"name":"${var.cluster_issuer_name}"},"spec":{"ca":{"secretName":"ext-ca"}}}'
+    EOT
   }
 
-  depends_on = [kubernetes_manifest.ca_certificate[0]]
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/apis/cert-manager.io/v1/clusterissuers/${self.triggers.name}" || true
+    EOT
+  }
+
+  depends_on = [null_resource.ca_certificate]
 }
 
 # Pull f5-bigip-k8s-manifest chart to extract FLO and CIS versions
@@ -489,66 +516,102 @@ resource "null_resource" "flo_namespace" {
 }
 
 # Create BIG-IP login secret for CIS controller
-resource "kubernetes_secret" "bigip_ctlr_login" {
-  provider = kubernetes
-  count    = local.global_enabled ? 1 : 0
+resource "null_resource" "bigip_ctlr_login" {
+  count = local.global_enabled ? 1 : 0
 
-  metadata {
+  triggers = {
     name      = "f5-bigip-ctlr-login"
-    namespace = var.flo_namespace != "default" ? var.flo_namespace : "default"
+    namespace = var.flo_namespace
+    host      = var.kube_host
+    token     = var.kube_token
   }
 
-  data = {
-    username = var.bigip_username
-    password = var.bigip_password
-    url      = replace(var.bigip_url, "https://", "")
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/api/v1/namespaces/${var.flo_namespace}/secrets/f5-bigip-ctlr-login?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"f5-bigip-ctlr-login","namespace":"${var.flo_namespace}"},"type":"Opaque","data":{"username":"${local.bigip_username_b64}","password":"${local.bigip_password_b64}","url":"${local.bigip_url_b64}"}}'
+    EOT
   }
 
-  depends_on = [
-    null_resource.flo_namespace
-  ]
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/api/v1/namespaces/${self.triggers.namespace}/secrets/${self.triggers.name}" || true
+    EOT
+  }
+
+  depends_on = [null_resource.flo_namespace]
 }
 
-# Create FAR image pull secret using kubernetes_secret (removes local-exec)
-resource "kubernetes_secret" "far_secret_flo" {
-  provider = kubernetes
-  count    = local.global_enabled ? 1 : 0
+# Create FAR image pull secret in flo namespace
+resource "null_resource" "far_secret_flo" {
+  count = local.global_enabled ? 1 : 0
 
-  metadata {
+  triggers = {
     name      = "far-secret"
-    namespace = var.flo_namespace != "default" ? var.flo_namespace : "default"
+    namespace = var.flo_namespace
+    host      = var.kube_host
+    token     = var.kube_token
   }
 
-  type = "kubernetes.io/dockerconfigjson"
-
-  data = {
-    ".dockerconfigjson" = local.far_docker_config_json
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/api/v1/namespaces/${var.flo_namespace}/secrets/far-secret?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"far-secret","namespace":"${var.flo_namespace}"},"type":"kubernetes.io/dockerconfigjson","data":{".dockerconfigjson":"${local.far_docker_config_b64}"}}'
+    EOT
   }
 
-  depends_on = [
-    null_resource.flo_namespace
-  ]
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/api/v1/namespaces/${self.triggers.namespace}/secrets/${self.triggers.name}" || true
+    EOT
+  }
+
+  depends_on = [null_resource.flo_namespace]
 }
 
 # Create FAR image pull secret in f5-utils namespace
-resource "kubernetes_secret" "far_secret_utils" {
-  provider = kubernetes
-  count    = local.global_enabled ? 1 : 0
+resource "null_resource" "far_secret_utils" {
+  count = local.global_enabled ? 1 : 0
 
-  metadata {
+  triggers = {
     name      = "far-secret"
     namespace = var.utils_namespace
+    host      = var.kube_host
+    token     = var.kube_token
   }
 
-  type = "kubernetes.io/dockerconfigjson"
-
-  data = {
-    ".dockerconfigjson" = local.far_docker_config_json
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/api/v1/namespaces/${var.utils_namespace}/secrets/far-secret?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"far-secret","namespace":"${var.utils_namespace}"},"type":"kubernetes.io/dockerconfigjson","data":{".dockerconfigjson":"${local.far_docker_config_b64}"}}'
+    EOT
   }
 
-  depends_on = [
-    null_resource.f5_utils
-  ]
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/api/v1/namespaces/${self.triggers.namespace}/secrets/${self.triggers.name}" || true
+    EOT
+  }
+
+  depends_on = [null_resource.f5_utils]
 }
 
 # Install f5-lifecycle-operator using Helm
@@ -571,8 +634,8 @@ resource "helm_release" "f5_lifecycle_operator" {
   depends_on = [
     null_resource.extract_flo_version,
     null_resource.flo_namespace,
-    kubernetes_secret.far_secret_flo,
-    kubernetes_manifest.ca_cluster_issuer[0]
+    null_resource.far_secret_flo,
+    null_resource.ca_cluster_issuer
   ]
 }
 
@@ -596,76 +659,103 @@ resource "helm_release" "f5_bnk_cis" {
   depends_on = [
     null_resource.extract_flo_version,
     null_resource.flo_namespace,
-    kubernetes_secret.far_secret_flo,
-    kubernetes_manifest.ca_cluster_issuer[0],
+    null_resource.far_secret_flo,
+    null_resource.ca_cluster_issuer,
   ]
 }
 
 # Apply privileged SCC to flo-f5-lifecycle-operator service account using Kubernetes RBAC
 # This approach works with IBM Schematics and doesn't require 'oc' CLI
-resource "kubernetes_cluster_role_binding" "flo_scc_privileged" {
+resource "null_resource" "flo_scc_privileged" {
   count = local.global_enabled ? 1 : 0
 
-  metadata {
-    name = "system:openshift:scc:privileged:${var.flo_namespace}:flo-f5-lifecycle-operator"
+  triggers = {
+    name  = "system:openshift:scc:privileged:${var.flo_namespace}:flo-f5-lifecycle-operator"
+    host  = var.kube_host
+    token = var.kube_token
   }
 
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = "system:openshift:scc:privileged"
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/system:openshift:scc:privileged:${var.flo_namespace}:flo-f5-lifecycle-operator?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"system:openshift:scc:privileged:${var.flo_namespace}:flo-f5-lifecycle-operator"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"system:openshift:scc:privileged"},"subjects":[{"kind":"ServiceAccount","name":"flo-f5-lifecycle-operator","namespace":"${var.flo_namespace}"}]}'
+    EOT
   }
 
-  subject {
-    kind      = "ServiceAccount"
-    name      = "flo-f5-lifecycle-operator"
-    namespace = var.flo_namespace
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${self.triggers.name}" || true
+    EOT
   }
 
   depends_on = [helm_release.f5_lifecycle_operator[0]]
 }
 
 # Apply privileged SCC to f5-bigip-ctlr-serviceaccount for CIS
-resource "kubernetes_cluster_role_binding" "cis_scc_privileged" {
+resource "null_resource" "cis_scc_privileged" {
   count = local.global_enabled ? 1 : 0
 
-  metadata {
-    name = "system:openshift:scc:privileged:${var.flo_namespace}:f5-bigip-ctlr-serviceaccount"
+  triggers = {
+    name  = "system:openshift:scc:privileged:${var.flo_namespace}:f5-bigip-ctlr-serviceaccount"
+    host  = var.kube_host
+    token = var.kube_token
   }
 
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = "system:openshift:scc:privileged"
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/system:openshift:scc:privileged:${var.flo_namespace}:f5-bigip-ctlr-serviceaccount?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"system:openshift:scc:privileged:${var.flo_namespace}:f5-bigip-ctlr-serviceaccount"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"system:openshift:scc:privileged"},"subjects":[{"kind":"ServiceAccount","name":"f5-bigip-ctlr-serviceaccount","namespace":"${var.flo_namespace}"}]}'
+    EOT
   }
 
-  subject {
-    kind      = "ServiceAccount"
-    name      = "f5-bigip-ctlr-serviceaccount"
-    namespace = var.flo_namespace
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${self.triggers.name}" || true
+    EOT
   }
 
   depends_on = [helm_release.f5_bnk_cis[0]]
 }
 
 # Apply privileged SCC to default service account for CIS
-resource "kubernetes_cluster_role_binding" "cis_default_scc_privileged" {
+resource "null_resource" "cis_default_scc_privileged" {
   count = local.global_enabled ? 1 : 0
 
-  metadata {
-    name = "system:openshift:scc:privileged:${var.flo_namespace}:default"
+  triggers = {
+    name  = "system:openshift:scc:privileged:${var.flo_namespace}:default"
+    host  = var.kube_host
+    token = var.kube_token
   }
 
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = "system:openshift:scc:privileged"
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/system:openshift:scc:privileged:${var.flo_namespace}:default?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"system:openshift:scc:privileged:${var.flo_namespace}:default"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"system:openshift:scc:privileged"},"subjects":[{"kind":"ServiceAccount","name":"default","namespace":"${var.flo_namespace}"}]}'
+    EOT
   }
 
-  subject {
-    kind      = "ServiceAccount"
-    name      = "default"
-    namespace = var.flo_namespace
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${self.triggers.name}" || true
+    EOT
   }
 
   depends_on = [helm_release.f5_bnk_cis[0]]
@@ -673,12 +763,12 @@ resource "kubernetes_cluster_role_binding" "cis_default_scc_privileged" {
 
 # Wait for SCC policies to be applied and pods to start
 resource "time_sleep" "wait_for_flo_scc_policies" {
-  count             = local.global_enabled ? 1 : 0
-  create_duration   = "30s"
+  count           = local.global_enabled ? 1 : 0
+  create_duration = "30s"
   triggers = {
-    scc_policies_count = length(kubernetes_cluster_role_binding.flo_scc_privileged) + length(kubernetes_cluster_role_binding.cis_scc_privileged) + length(kubernetes_cluster_role_binding.cis_default_scc_privileged)
+    scc_policies_applied = "1"
   }
-  depends_on = [kubernetes_cluster_role_binding.flo_scc_privileged, kubernetes_cluster_role_binding.cis_scc_privileged, kubernetes_cluster_role_binding.cis_default_scc_privileged]
+  depends_on = [null_resource.flo_scc_privileged, null_resource.cis_scc_privileged, null_resource.cis_default_scc_privileged]
 }
 
 # Query pods in FLO namespace after SCC policies applied
@@ -724,64 +814,65 @@ resource "null_resource" "node_labeler_sa" {
 }
 
 # Create cluster role for node labeling
-resource "kubernetes_manifest" "node_labeler_role" {
-  provider = kubernetes
-  count    = local.global_enabled ? 1 : 0
+resource "null_resource" "node_labeler_role" {
+  count = local.global_enabled ? 1 : 0
 
-  manifest = {
-    apiVersion = "rbac.authorization.k8s.io/v1"
-    kind       = "ClusterRole"
-    metadata = {
-      name = "node-labeler"
-    }
-    rules = [
-      {
-        apiGroups = [""]
-        resources = ["nodes"]
-        verbs     = ["get", "list", "patch", "update"]
-      }
-    ]
+  triggers = {
+    host  = var.kube_host
+    token = var.kube_token
   }
 
-  field_manager {
-    name            = "terraform"
-    force_conflicts = true
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/apis/rbac.authorization.k8s.io/v1/clusterroles/node-labeler?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"node-labeler"},"rules":[{"apiGroups":[""],"resources":["nodes"],"verbs":["get","list","patch","update"]}]}'
+    EOT
   }
 
-  depends_on = [null_resource.node_labeler_sa[0]]
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/apis/rbac.authorization.k8s.io/v1/clusterroles/node-labeler" || true
+    EOT
+  }
+
+  depends_on = [null_resource.node_labeler_sa]
 }
 
 # Bind role to service account
-resource "kubernetes_manifest" "node_labeler_binding" {
-  provider = kubernetes
-  count    = local.global_enabled ? 1 : 0
+resource "null_resource" "node_labeler_binding" {
+  count = local.global_enabled ? 1 : 0
 
-  manifest = {
-    apiVersion = "rbac.authorization.k8s.io/v1"
-    kind       = "ClusterRoleBinding"
-    metadata = {
-      name = "node-labeler"
-    }
-    roleRef = {
-      apiGroup = "rbac.authorization.k8s.io"
-      kind     = "ClusterRole"
-      name     = "node-labeler"
-    }
-    subjects = [
-      {
-        kind      = "ServiceAccount"
-        name      = "node-labeler"
-        namespace = "kube-system"
-      }
-    ]
+  triggers = {
+    host  = var.kube_host
+    token = var.kube_token
   }
 
-  field_manager {
-    name            = "terraform"
-    force_conflicts = true
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/node-labeler?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"node-labeler"},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"node-labeler"},"subjects":[{"kind":"ServiceAccount","name":"node-labeler","namespace":"kube-system"}]}'
+    EOT
   }
 
-  depends_on = [kubernetes_manifest.node_labeler_role[0]]
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/node-labeler" || true
+    EOT
+  }
+
+  depends_on = [null_resource.node_labeler_role]
 }
 
 # Create a Job to label all nodes (runs via kubernetes provider, not local-exec)
@@ -821,9 +912,10 @@ resource "kubernetes_manifest" "node_labeler_job" {
     }
   }
 
-  depends_on = [kubernetes_manifest.network_attachment_definition,
+  depends_on = [
+    null_resource.network_attachment_definition,
     helm_release.f5_lifecycle_operator[0],
-    kubernetes_manifest.node_labeler_binding[0]
+    null_resource.node_labeler_binding,
   ]
 }
 

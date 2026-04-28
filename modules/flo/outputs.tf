@@ -105,7 +105,7 @@ output "flo_pod_deployment_status" {
   description = "Status of FLO pod deployment with pod counts and verification steps"
   value = var.enabled ? {
     pod_count           = length(data.kubernetes_resources.flo_namespace_pods[0].objects)
-    scc_policy_count    = length(kubernetes_cluster_role_binding.flo_scc_privileged)
+    scc_policy_count    = length(null_resource.flo_scc_privileged)
     namespace           = var.flo_namespace
     status_message      = "FLO pods deployed after SCC privileged policy applied"
     next_steps          = [
