@@ -241,8 +241,13 @@ resource "kubernetes_manifest" "network_attachment_definition" {
     }
   }
 
+  field_manager {
+    name            = "terraform"
+    force_conflicts = true
+  }
+
   depends_on = [
-    kubernetes_namespace.flo_namespace
+    kubernetes_manifest.flo_namespace
   ]
 }
 
@@ -277,8 +282,13 @@ resource "kubernetes_manifest" "macvlan_network_attachment_definition" {
     }
   }
 
+  field_manager {
+    name            = "terraform"
+    force_conflicts = true
+  }
+
   depends_on = [
-    kubernetes_namespace.flo_namespace
+    kubernetes_manifest.flo_namespace
   ]
 }
 
@@ -296,6 +306,11 @@ resource "kubernetes_manifest" "cluster_issuers" {
     spec = {
       selfSigned = {}
     }
+  }
+
+  field_manager {
+    name            = "terraform"
+    force_conflicts = true
   }
 }
 
@@ -323,6 +338,11 @@ resource "kubernetes_manifest" "ca_certificate" {
     }
   }
 
+  field_manager {
+    name            = "terraform"
+    force_conflicts = true
+  }
+
   depends_on = [kubernetes_manifest.cluster_issuers[0]]
 }
 
@@ -342,6 +362,11 @@ resource "kubernetes_manifest" "ca_cluster_issuer" {
         secretName = "ext-ca"
       }
     }
+  }
+
+  field_manager {
+    name            = "terraform"
+    force_conflicts = true
   }
 
   depends_on = [kubernetes_manifest.ca_certificate[0]]
@@ -406,21 +431,33 @@ data "local_file" "cis_version" {
   depends_on = [null_resource.extract_flo_version]
 }
 
-# Create f5-utils namespace
-resource "kubernetes_namespace" "f5_utils" {
+# Create f5-utils namespace (server-side apply — idempotent across test runs)
+resource "kubernetes_manifest" "f5_utils" {
   provider = kubernetes
   count    = local.global_enabled ? 1 : 0
-  metadata {
-    name = var.utils_namespace
+  manifest = {
+    apiVersion = "v1"
+    kind       = "Namespace"
+    metadata   = { name = var.utils_namespace }
+  }
+  field_manager {
+    name            = "terraform"
+    force_conflicts = true
   }
 }
 
 # Create FLO namespace (skip if it's "default" - always exists)
-resource "kubernetes_namespace" "flo_namespace" {
+resource "kubernetes_manifest" "flo_namespace" {
   provider = kubernetes
   count    = local.global_enabled && var.flo_namespace != "default" ? 1 : 0
-  metadata {
-    name = var.flo_namespace
+  manifest = {
+    apiVersion = "v1"
+    kind       = "Namespace"
+    metadata   = { name = var.flo_namespace }
+  }
+  field_manager {
+    name            = "terraform"
+    force_conflicts = true
   }
 }
 
@@ -431,7 +468,7 @@ resource "kubernetes_secret" "bigip_ctlr_login" {
 
   metadata {
     name      = "f5-bigip-ctlr-login"
-    namespace = var.flo_namespace != "default" ? kubernetes_namespace.flo_namespace[0].metadata[0].name : "default"
+    namespace = var.flo_namespace != "default" ? var.flo_namespace : "default"
   }
 
   data = {
@@ -441,7 +478,7 @@ resource "kubernetes_secret" "bigip_ctlr_login" {
   }
 
   depends_on = [
-    kubernetes_namespace.flo_namespace
+    kubernetes_manifest.flo_namespace
   ]
 }
 
@@ -452,7 +489,7 @@ resource "kubernetes_secret" "far_secret_flo" {
 
   metadata {
     name      = "far-secret"
-    namespace = var.flo_namespace != "default" ? kubernetes_namespace.flo_namespace[0].metadata[0].name : "default"
+    namespace = var.flo_namespace != "default" ? var.flo_namespace : "default"
   }
 
   type = "kubernetes.io/dockerconfigjson"
@@ -462,7 +499,7 @@ resource "kubernetes_secret" "far_secret_flo" {
   }
 
   depends_on = [
-    kubernetes_namespace.flo_namespace
+    kubernetes_manifest.flo_namespace
   ]
 }
 
@@ -473,7 +510,7 @@ resource "kubernetes_secret" "far_secret_utils" {
 
   metadata {
     name      = "far-secret"
-    namespace = kubernetes_namespace.f5_utils[0].metadata[0].name
+    namespace = var.utils_namespace
   }
 
   type = "kubernetes.io/dockerconfigjson"
@@ -483,7 +520,7 @@ resource "kubernetes_secret" "far_secret_utils" {
   }
 
   depends_on = [
-    kubernetes_namespace.f5_utils
+    kubernetes_manifest.f5_utils
   ]
 }
 
@@ -505,7 +542,7 @@ resource "helm_release" "f5_lifecycle_operator" {
   values = [yamlencode(local.flo_helm_values)]
 
   depends_on = [
-    kubernetes_namespace.flo_namespace,
+    kubernetes_manifest.flo_namespace,
     kubernetes_secret.far_secret_flo,
     kubernetes_manifest.ca_cluster_issuer[0]
   ]
@@ -529,7 +566,7 @@ resource "helm_release" "f5_bnk_cis" {
   values = [yamlencode(local.cis_helm_values)]
 
   depends_on = [
-    kubernetes_namespace.flo_namespace,
+    kubernetes_manifest.flo_namespace,
     kubernetes_secret.far_secret_flo,
     kubernetes_manifest.ca_cluster_issuer[0],
   ]
@@ -626,14 +663,23 @@ data "kubernetes_resources" "flo_namespace_pods" {
   depends_on = [time_sleep.wait_for_flo_scc_policies[0]]
 }
 
-# Create service account for node labeler
-resource "kubernetes_service_account" "node_labeler" {
+# Create service account for node labeler (server-side apply — idempotent across test runs)
+resource "kubernetes_manifest" "node_labeler_sa" {
   provider = kubernetes
   count    = local.global_enabled ? 1 : 0
 
-  metadata {
-    name      = "node-labeler"
-    namespace = "kube-system"
+  manifest = {
+    apiVersion = "v1"
+    kind       = "ServiceAccount"
+    metadata = {
+      name      = "node-labeler"
+      namespace = "kube-system"
+    }
+  }
+
+  field_manager {
+    name            = "terraform"
+    force_conflicts = true
   }
 
   depends_on = [var.cert_manager_crd_ready]
@@ -659,7 +705,12 @@ resource "kubernetes_manifest" "node_labeler_role" {
     ]
   }
 
-  depends_on = [kubernetes_service_account.node_labeler[0]]
+  field_manager {
+    name            = "terraform"
+    force_conflicts = true
+  }
+
+  depends_on = [kubernetes_manifest.node_labeler_sa[0]]
 }
 
 # Bind role to service account
@@ -685,6 +736,11 @@ resource "kubernetes_manifest" "node_labeler_binding" {
         namespace = "kube-system"
       }
     ]
+  }
+
+  field_manager {
+    name            = "terraform"
+    force_conflicts = true
   }
 
   depends_on = [kubernetes_manifest.node_labeler_role[0]]

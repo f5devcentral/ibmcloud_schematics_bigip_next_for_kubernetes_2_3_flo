@@ -281,6 +281,35 @@ def run_job(cmd, ws_id, label, lf, success_statuses, timeout=JOB_TIMEOUT):
     return passed, final_status, elapsed
 
 
+def cleanup_stale_iam_profile(var_map, lf=None):
+    """Delete any IBM IAM trusted profile whose name ends with the expected suffix.
+
+    The profile name is {cluster_name}-f5-cne-controller-{flo_namespace}.  The
+    cluster name is resolved at apply time, so we match by suffix to catch stale
+    profiles left by previous failed runs.
+    """
+    flo_namespace = var_map.get("flo_namespace", "f5-bnk")
+    suffix = f"-f5-cne-controller-{flo_namespace}"
+    tee(f"  Checking for stale IAM trusted profiles (*{suffix})", lf)
+    rc, out, err = run_cmd("ibmcloud iam trusted-profiles --output json")
+    if rc != 0:
+        tee(f"  WARNING: could not list IAM trusted profiles: {(err or out).strip()}", lf)
+        return
+    try:
+        raw = json.loads(out)
+        profiles = raw if isinstance(raw, list) else (
+            raw.get("TrustedProfiles") or raw.get("trusted_profiles") or []
+        )
+        for p in profiles:
+            name = p.get("Name") or p.get("name", "")
+            if name.endswith(suffix):
+                pid = p.get("ID") or p.get("id", "")
+                tee(f"  Deleting stale IAM trusted profile: {name} ({pid})", lf)
+                run_cmd(f"ibmcloud iam trusted-profile-delete {pid} -f", lf=lf)
+    except (json.JSONDecodeError, TypeError) as exc:
+        tee(f"  WARNING: could not parse IAM trusted profiles: {exc}", lf)
+
+
 def fetch_outputs(ws_id, lf=None):
     try:
         data  = ibmcloud_json(f"ibmcloud schematics output --id {ws_id}", lf)
@@ -543,6 +572,7 @@ def main():
     started_at = datetime.now(timezone.utc)
     ws_id      = args.ws_id or None
     ws_name    = None
+    var_map    = {}
     phases     = []
     outputs    = {}
     overall    = "FAIL"
@@ -608,6 +638,7 @@ def main():
                     "copy terraform.tfvars.example and fill in your values"
                 )
             variables = parse_tfvars(tfvars_path)
+            var_map   = {v["name"]: v["value"] for v in variables}
             ws        = build_workspace_json(variables, ts_label, branch=branch)
             ws_name   = ws["name"]
 
@@ -703,6 +734,8 @@ def main():
                 p_apply.error  = "skipped — plan failed"
             else:
                 section("PHASE — Apply workspace")
+                tee("  Cleaning up stale IAM resources before apply...", lf)
+                cleanup_stale_iam_profile(var_map, lf)
                 t0 = time.time()
                 try:
                     passed, final_status, elapsed = run_job(
@@ -731,7 +764,11 @@ def main():
         p_destroy = Phase("destroy")
         if "destroy" in run:
             pre = get_ws_status(ws_id) if ws_id else "UNKNOWN"
-            if pre in {"INACTIVE", "DRAFT"}:
+            # Always attempt destroy when apply failed — IBM Schematics can
+            # settle back to INACTIVE after a failed apply even though partial
+            # cluster resources may still exist.
+            apply_failed = "apply" in run and p_apply.status == "FAIL"
+            if pre in {"INACTIVE", "DRAFT"} and not apply_failed:
                 p_destroy.status = "SKIP"
                 p_destroy.error  = f"no managed state (status={pre})"
             else:
