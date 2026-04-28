@@ -63,12 +63,12 @@ output "f5_bigip_k8s_manifest_version" {
 
 output "extracted_flo_version" {
   description = "FLO version extracted from f5-bigip-k8s-manifest"
-  value       = var.enabled ? trimspace(data.local_file.flo_version[0].content) : null
+  value       = var.enabled ? local.flo_version : null
 }
 
 output "extracted_cis_version" {
   description = "CIS version extracted from f5-bigip-k8s-manifest"
-  value       = var.enabled ? trimspace(data.local_file.cis_version[0].content) : null
+  value       = var.enabled ? local.cis_version : null
 }
 
 output "manifest_download_dir" {
