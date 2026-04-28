@@ -247,7 +247,7 @@ resource "kubernetes_manifest" "network_attachment_definition" {
   }
 
   depends_on = [
-    kubernetes_manifest.flo_namespace
+    null_resource.flo_namespace
   ]
 }
 
@@ -288,29 +288,36 @@ resource "kubernetes_manifest" "macvlan_network_attachment_definition" {
   }
 
   depends_on = [
-    kubernetes_manifest.flo_namespace
+    null_resource.flo_namespace
   ]
 }
 
-# Apply ClusterIssuer manifest (cert-manager deployed by separate cert-manager module)
-resource "kubernetes_manifest" "cluster_issuers" {
-  provider = kubernetes
-  count    = local.global_enabled && var.cert_manager_crd_ready ? 1 : 0
+# Apply ClusterIssuer via curl server-side apply — idempotent across test runs.
+resource "null_resource" "cluster_issuers" {
+  count = local.global_enabled && var.cert_manager_crd_ready ? 1 : 0
 
-  manifest = {
-    apiVersion = "cert-manager.io/v1"
-    kind       = "ClusterIssuer"
-    metadata = {
-      name = "selfsigned-cluster-issuer"
-    }
-    spec = {
-      selfSigned = {}
-    }
+  triggers = {
+    host  = var.kube_host
+    token = var.kube_token
   }
 
-  field_manager {
-    name            = "terraform"
-    force_conflicts = true
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/apis/cert-manager.io/v1/clusterissuers/selfsigned-cluster-issuer?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"cert-manager.io/v1","kind":"ClusterIssuer","metadata":{"name":"selfsigned-cluster-issuer"},"spec":{"selfSigned":{}}}'
+    EOT
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/apis/cert-manager.io/v1/clusterissuers/selfsigned-cluster-issuer" || true
+    EOT
   }
 }
 
@@ -343,7 +350,7 @@ resource "kubernetes_manifest" "ca_certificate" {
     force_conflicts = true
   }
 
-  depends_on = [kubernetes_manifest.cluster_issuers[0]]
+  depends_on = [null_resource.cluster_issuers[0]]
 }
 
 # CA cluster issuer
@@ -431,33 +438,64 @@ data "local_file" "cis_version" {
   depends_on = [null_resource.extract_flo_version]
 }
 
-# Create f5-utils namespace (server-side apply — idempotent across test runs)
-resource "kubernetes_manifest" "f5_utils" {
-  provider = kubernetes
-  count    = local.global_enabled ? 1 : 0
-  manifest = {
-    apiVersion = "v1"
-    kind       = "Namespace"
-    metadata   = { name = var.utils_namespace }
+# Create f5-utils namespace via curl server-side apply — idempotent; no provider
+# existence-check so it succeeds even when the namespace was left by a prior run.
+resource "null_resource" "f5_utils" {
+  count = local.global_enabled ? 1 : 0
+
+  triggers = {
+    name  = var.utils_namespace
+    host  = var.kube_host
+    token = var.kube_token
   }
-  field_manager {
-    name            = "terraform"
-    force_conflicts = true
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/api/v1/namespaces/${var.utils_namespace}?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"${var.utils_namespace}"}}'
+    EOT
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/api/v1/namespaces/${self.triggers.name}" || true
+    EOT
   }
 }
 
 # Create FLO namespace (skip if it's "default" - always exists)
-resource "kubernetes_manifest" "flo_namespace" {
-  provider = kubernetes
-  count    = local.global_enabled && var.flo_namespace != "default" ? 1 : 0
-  manifest = {
-    apiVersion = "v1"
-    kind       = "Namespace"
-    metadata   = { name = var.flo_namespace }
+resource "null_resource" "flo_namespace" {
+  count = local.global_enabled && var.flo_namespace != "default" ? 1 : 0
+
+  triggers = {
+    name  = var.flo_namespace
+    host  = var.kube_host
+    token = var.kube_token
   }
-  field_manager {
-    name            = "terraform"
-    force_conflicts = true
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/api/v1/namespaces/${var.flo_namespace}?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"${var.flo_namespace}"}}'
+    EOT
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/api/v1/namespaces/${self.triggers.name}" || true
+    EOT
   }
 }
 
@@ -478,7 +516,7 @@ resource "kubernetes_secret" "bigip_ctlr_login" {
   }
 
   depends_on = [
-    kubernetes_manifest.flo_namespace
+    null_resource.flo_namespace
   ]
 }
 
@@ -499,7 +537,7 @@ resource "kubernetes_secret" "far_secret_flo" {
   }
 
   depends_on = [
-    kubernetes_manifest.flo_namespace
+    null_resource.flo_namespace
   ]
 }
 
@@ -520,7 +558,7 @@ resource "kubernetes_secret" "far_secret_utils" {
   }
 
   depends_on = [
-    kubernetes_manifest.f5_utils
+    null_resource.f5_utils
   ]
 }
 
@@ -542,7 +580,7 @@ resource "helm_release" "f5_lifecycle_operator" {
   values = [yamlencode(local.flo_helm_values)]
 
   depends_on = [
-    kubernetes_manifest.flo_namespace,
+    null_resource.flo_namespace,
     kubernetes_secret.far_secret_flo,
     kubernetes_manifest.ca_cluster_issuer[0]
   ]
@@ -566,7 +604,7 @@ resource "helm_release" "f5_bnk_cis" {
   values = [yamlencode(local.cis_helm_values)]
 
   depends_on = [
-    kubernetes_manifest.flo_namespace,
+    null_resource.flo_namespace,
     kubernetes_secret.far_secret_flo,
     kubernetes_manifest.ca_cluster_issuer[0],
   ]
@@ -663,23 +701,32 @@ data "kubernetes_resources" "flo_namespace_pods" {
   depends_on = [time_sleep.wait_for_flo_scc_policies[0]]
 }
 
-# Create service account for node labeler (server-side apply — idempotent across test runs)
-resource "kubernetes_manifest" "node_labeler_sa" {
-  provider = kubernetes
-  count    = local.global_enabled ? 1 : 0
+# Create service account for node labeler via curl server-side apply — idempotent.
+resource "null_resource" "node_labeler_sa" {
+  count = local.global_enabled ? 1 : 0
 
-  manifest = {
-    apiVersion = "v1"
-    kind       = "ServiceAccount"
-    metadata = {
-      name      = "node-labeler"
-      namespace = "kube-system"
-    }
+  triggers = {
+    host  = var.kube_host
+    token = var.kube_token
   }
 
-  field_manager {
-    name            = "terraform"
-    force_conflicts = true
+  provisioner "local-exec" {
+    command = <<-EOT
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Content-Type: application/apply-patch+yaml" \
+        "${var.kube_host}/api/v1/namespaces/kube-system/serviceaccounts/node-labeler?fieldManager=terraform&force=true" \
+        -d '{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"node-labeler","namespace":"kube-system"}}'
+    EOT
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      curl -sk -X DELETE \
+        -H "Authorization: Bearer ${self.triggers.token}" \
+        "${self.triggers.host}/api/v1/namespaces/kube-system/serviceaccounts/node-labeler" || true
+    EOT
   }
 
   depends_on = [var.cert_manager_crd_ready]
@@ -710,7 +757,7 @@ resource "kubernetes_manifest" "node_labeler_role" {
     force_conflicts = true
   }
 
-  depends_on = [kubernetes_manifest.node_labeler_sa[0]]
+  depends_on = [null_resource.node_labeler_sa[0]]
 }
 
 # Bind role to service account

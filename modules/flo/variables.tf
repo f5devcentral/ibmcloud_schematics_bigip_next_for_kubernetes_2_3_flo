@@ -65,6 +65,18 @@ variable "utils_namespace" {
   default     = "f5-utils"
 }
 
+variable "kube_host" {
+  description = "Kubernetes API server URL (used by null_resource curl provisioners)"
+  type        = string
+  sensitive   = true
+}
+
+variable "kube_token" {
+  description = "Kubernetes bearer token (used by null_resource curl provisioners)"
+  type        = string
+  sensitive   = true
+}
+
 variable "jwt_token" {
   description = "JWT token for license authentication (unused — fetched from COS)"
   type        = string
