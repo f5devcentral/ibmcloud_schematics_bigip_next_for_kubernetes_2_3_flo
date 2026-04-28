@@ -53,7 +53,7 @@ output "flo_version" {
 
 output "f5_utils_namespace" {
   description = "Namespace for F5 utility components"
-  value       = var.enabled ? kubernetes_namespace.f5_utils[0].metadata[0].name : null
+  value       = var.enabled ? var.utils_namespace : null
 }
 
 output "f5_bigip_k8s_manifest_version" {
