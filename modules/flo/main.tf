@@ -422,20 +422,9 @@ resource "null_resource" "extract_flo_version" {
   depends_on = [null_resource.cne_far_tgz_extractor]
 }
 
-# Read the extracted FLO version
-data "local_file" "flo_version" {
-  count    = local.global_enabled ? 1 : 0
-  filename = "${var.manifest_download_dir}/flo-version.txt"
-
-  depends_on = [null_resource.extract_flo_version]
-}
-
-# Read the extracted CIS version
-data "local_file" "cis_version" {
-  count    = local.global_enabled ? 1 : 0
-  filename = "${var.manifest_download_dir}/cis-version.txt"
-
-  depends_on = [null_resource.extract_flo_version]
+locals {
+  flo_version = local.global_enabled ? try(trimspace(file("${var.manifest_download_dir}/flo-version.txt")), "") : ""
+  cis_version = local.global_enabled ? try(trimspace(file("${var.manifest_download_dir}/cis-version.txt")), "") : ""
 }
 
 # Create f5-utils namespace via curl server-side apply — idempotent; no provider
@@ -572,7 +561,7 @@ resource "helm_release" "f5_lifecycle_operator" {
   chart               = "f5-lifecycle-operator"
   repository_username = "_json_key_base64"
   repository_password = local.far_service_account_b64
-  version             = chomp(data.local_file.flo_version[0].content)
+  version             = local.flo_version
   namespace           = var.flo_namespace
   wait                = false
   timeout             = 300
@@ -580,6 +569,7 @@ resource "helm_release" "f5_lifecycle_operator" {
   values = [yamlencode(local.flo_helm_values)]
 
   depends_on = [
+    null_resource.extract_flo_version,
     null_resource.flo_namespace,
     kubernetes_secret.far_secret_flo,
     kubernetes_manifest.ca_cluster_issuer[0]
@@ -596,7 +586,7 @@ resource "helm_release" "f5_bnk_cis" {
   chart               = "f5-bnk-cis"
   repository_username = "_json_key_base64"
   repository_password = local.far_service_account_b64
-  version             = chomp(data.local_file.cis_version[0].content)
+  version             = local.cis_version
   namespace           = var.flo_namespace
   wait                = false
   timeout             = 300
@@ -604,6 +594,7 @@ resource "helm_release" "f5_bnk_cis" {
   values = [yamlencode(local.cis_helm_values)]
 
   depends_on = [
+    null_resource.extract_flo_version,
     null_resource.flo_namespace,
     kubernetes_secret.far_secret_flo,
     kubernetes_manifest.ca_cluster_issuer[0],
