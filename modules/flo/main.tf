@@ -449,9 +449,19 @@ resource "null_resource" "extract_flo_version" {
   depends_on = [null_resource.cne_far_tgz_extractor]
 }
 
-locals {
-  flo_version = local.global_enabled ? try(trimspace(file("${var.manifest_download_dir}/flo-version.txt")), "") : ""
-  cis_version = local.global_enabled ? try(trimspace(file("${var.manifest_download_dir}/cis-version.txt")), "") : ""
+# Read extracted FLO/CIS versions after extract_flo_version provisioner runs.
+# depends_on defers evaluation to apply time (file exists) rather than plan time
+# (file absent). The bash program returns "" gracefully when files are missing,
+# so destroy-phase refresh does not abort even in a fresh ephemeral container.
+data "external" "versions" {
+  count = local.global_enabled ? 1 : 0
+
+  program = [
+    "bash", "-c",
+    "F=$(cat ${var.manifest_download_dir}/flo-version.txt 2>/dev/null | tr -d '[:space:]'); C=$(cat ${var.manifest_download_dir}/cis-version.txt 2>/dev/null | tr -d '[:space:]'); printf '{\"flo\":\"%s\",\"cis\":\"%s\"}' \"$F\" \"$C\"",
+  ]
+
+  depends_on = [null_resource.extract_flo_version]
 }
 
 # Create f5-utils namespace via curl server-side apply — idempotent; no provider
@@ -624,7 +634,7 @@ resource "helm_release" "f5_lifecycle_operator" {
   chart               = "f5-lifecycle-operator"
   repository_username = "_json_key_base64"
   repository_password = local.far_service_account_b64
-  version             = local.flo_version
+  version             = data.external.versions[0].result.flo
   namespace           = var.flo_namespace
   wait                = false
   timeout             = 300
@@ -632,7 +642,7 @@ resource "helm_release" "f5_lifecycle_operator" {
   values = [yamlencode(local.flo_helm_values)]
 
   depends_on = [
-    null_resource.extract_flo_version,
+    data.external.versions,
     null_resource.flo_namespace,
     null_resource.far_secret_flo,
     null_resource.ca_cluster_issuer
@@ -649,7 +659,7 @@ resource "helm_release" "f5_bnk_cis" {
   chart               = "f5-bnk-cis"
   repository_username = "_json_key_base64"
   repository_password = local.far_service_account_b64
-  version             = local.cis_version
+  version             = data.external.versions[0].result.cis
   namespace           = var.flo_namespace
   wait                = false
   timeout             = 300
@@ -657,7 +667,7 @@ resource "helm_release" "f5_bnk_cis" {
   values = [yamlencode(local.cis_helm_values)]
 
   depends_on = [
-    null_resource.extract_flo_version,
+    data.external.versions,
     null_resource.flo_namespace,
     null_resource.far_secret_flo,
     null_resource.ca_cluster_issuer,
