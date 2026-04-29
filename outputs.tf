@@ -17,6 +17,11 @@ output "flo_namespace" {
   value       = module.flo.flo_namespace
 }
 
+output "flo_utils_namespace" {
+  description = "Namespace where f5-lifecycle-operator utils are installed"
+  value       = module.flo.f5_utils_namespace
+}
+
 output "flo_version" {
   description = "Installed f5-lifecycle-operator version"
   value       = module.flo.flo_version
