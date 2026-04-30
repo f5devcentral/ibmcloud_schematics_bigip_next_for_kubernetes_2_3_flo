@@ -477,11 +477,27 @@ resource "null_resource" "f5_utils" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      curl -sf -X PATCH \
+      set -e
+      HTTP_CODE=$(curl -s -o /tmp/utils-ns-create-response.json -w "%{http_code}" -X PATCH \
         -H "Authorization: Bearer ${var.kube_token}" \
         -H "Content-Type: application/apply-patch+yaml" \
         "${var.kube_host}/api/v1/namespaces/${var.utils_namespace}?fieldManager=terraform&force=true" \
-        -d '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"${var.utils_namespace}"}}'
+        -d '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"${var.utils_namespace}"}}')
+      if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 400 ]; then
+        echo "ERROR: namespace PATCH returned HTTP $HTTP_CODE" >&2
+        cat /tmp/utils-ns-create-response.json >&2
+        exit 1
+      fi
+      for i in $(seq 1 30); do
+        PHASE=$(curl -s \
+          -H "Authorization: Bearer ${var.kube_token}" \
+          "${var.kube_host}/api/v1/namespaces/${var.utils_namespace}" \
+          | grep -o '"phase":"[^"]*"' | cut -d'"' -f4)
+        [ "$PHASE" = "Active" ] && exit 0
+        sleep 2
+      done
+      echo "ERROR: namespace ${var.utils_namespace} did not become Active within 60s" >&2
+      exit 1
     EOT
   }
 
@@ -507,11 +523,27 @@ resource "null_resource" "flo_namespace" {
 
   provisioner "local-exec" {
     command = <<-EOT
-      curl -sf -X PATCH \
+      set -e
+      HTTP_CODE=$(curl -s -o /tmp/ns-create-response.json -w "%{http_code}" -X PATCH \
         -H "Authorization: Bearer ${var.kube_token}" \
         -H "Content-Type: application/apply-patch+yaml" \
         "${var.kube_host}/api/v1/namespaces/${var.flo_namespace}?fieldManager=terraform&force=true" \
-        -d '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"${var.flo_namespace}"}}'
+        -d '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"${var.flo_namespace}"}}')
+      if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 400 ]; then
+        echo "ERROR: namespace PATCH returned HTTP $HTTP_CODE" >&2
+        cat /tmp/ns-create-response.json >&2
+        exit 1
+      fi
+      for i in $(seq 1 30); do
+        PHASE=$(curl -s \
+          -H "Authorization: Bearer ${var.kube_token}" \
+          "${var.kube_host}/api/v1/namespaces/${var.flo_namespace}" \
+          | grep -o '"phase":"[^"]*"' | cut -d'"' -f4)
+        [ "$PHASE" = "Active" ] && exit 0
+        sleep 2
+      done
+      echo "ERROR: namespace ${var.flo_namespace} did not become Active within 60s" >&2
+      exit 1
     EOT
   }
 
