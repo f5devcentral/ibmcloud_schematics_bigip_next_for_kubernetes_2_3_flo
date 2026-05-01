@@ -478,14 +478,13 @@ resource "null_resource" "f5_utils" {
   provisioner "local-exec" {
     command = <<-EOT
       set -e
-      HTTP_CODE=$(curl -s -o /tmp/utils-ns-create-response.json -w "%%{http_code}" -X PATCH \
+      BODY=$(curl -s -X PATCH \
         -H "Authorization: Bearer ${var.kube_token}" \
         -H "Content-Type: application/apply-patch+yaml" \
         "${var.kube_host}/api/v1/namespaces/${var.utils_namespace}?fieldManager=terraform&force=true" \
         -d '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"${var.utils_namespace}"}}')
-      if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 400 ]; then
-        echo "ERROR: namespace PATCH returned HTTP $HTTP_CODE" >&2
-        cat /tmp/utils-ns-create-response.json >&2
+      if ! echo "$BODY" | grep -q '"kind":"Namespace"'; then
+        echo "ERROR: namespace PATCH failed: $BODY" >&2
         exit 1
       fi
       for i in $(seq 1 30); do
@@ -524,14 +523,13 @@ resource "null_resource" "flo_namespace" {
   provisioner "local-exec" {
     command = <<-EOT
       set -e
-      HTTP_CODE=$(curl -s -o /tmp/ns-create-response.json -w "%%{http_code}" -X PATCH \
+      BODY=$(curl -s -X PATCH \
         -H "Authorization: Bearer ${var.kube_token}" \
         -H "Content-Type: application/apply-patch+yaml" \
         "${var.kube_host}/api/v1/namespaces/${var.flo_namespace}?fieldManager=terraform&force=true" \
         -d '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"${var.flo_namespace}"}}')
-      if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 400 ]; then
-        echo "ERROR: namespace PATCH returned HTTP $HTTP_CODE" >&2
-        cat /tmp/ns-create-response.json >&2
+      if ! echo "$BODY" | grep -q '"kind":"Namespace"'; then
+        echo "ERROR: namespace PATCH failed: $BODY" >&2
         exit 1
       fi
       for i in $(seq 1 30); do
