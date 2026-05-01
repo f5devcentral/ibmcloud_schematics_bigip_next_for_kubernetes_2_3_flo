@@ -523,8 +523,14 @@ resource "null_resource" "f5_utils" {
         "$HOST/api/v1/namespaces/$NS?fieldManager=terraform&force=true" \
         -d "$PATCH_BODY" | tr -d ' \t\r\n')
       if ! echo "$BODY" | grep -q '"kind":"Namespace"'; then
-        echo "ERROR: namespace PATCH failed: $BODY" >&2
-        exit 1
+        # OpenShift may return 500 "timedoutwaitingforthecondition" even when
+        # the namespace was created successfully.  Verify via a GET before failing.
+        NS_VERIFY=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS" | tr -d ' \t\r\n')
+        if ! echo "$NS_VERIFY" | grep -q '"kind":"Namespace"'; then
+          echo "ERROR: namespace PATCH failed and namespace does not exist: $BODY" >&2
+          exit 1
+        fi
+        echo "WARNING: namespace PATCH returned non-200 but namespace exists: $BODY" >&2
       fi
       for i in $(seq 1 30); do
         PHASE=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS" | tr -d ' \t\r\n' \
@@ -605,8 +611,14 @@ resource "null_resource" "flo_namespace" {
         "$HOST/api/v1/namespaces/$NS?fieldManager=terraform&force=true" \
         -d "$PATCH_BODY" | tr -d ' \t\r\n')
       if ! echo "$BODY" | grep -q '"kind":"Namespace"'; then
-        echo "ERROR: namespace PATCH failed: $BODY" >&2
-        exit 1
+        # OpenShift may return 500 "timedoutwaitingforthecondition" even when
+        # the namespace was created successfully.  Verify via a GET before failing.
+        NS_VERIFY=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS" | tr -d ' \t\r\n')
+        if ! echo "$NS_VERIFY" | grep -q '"kind":"Namespace"'; then
+          echo "ERROR: namespace PATCH failed and namespace does not exist: $BODY" >&2
+          exit 1
+        fi
+        echo "WARNING: namespace PATCH returned non-200 but namespace exists: $BODY" >&2
       fi
       for i in $(seq 1 30); do
         PHASE=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS" | tr -d ' \t\r\n' \
