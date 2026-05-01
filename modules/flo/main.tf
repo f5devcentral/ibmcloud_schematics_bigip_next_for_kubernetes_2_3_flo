@@ -502,8 +502,15 @@ resource "null_resource" "f5_utils" {
               -d '{"metadata":{"finalizers":[]}}' >/dev/null || true
           done
         done
+        # Force-remove the namespace kubernetes finalizer to unblock stuck deletions
+        FINAL_BODY=$(printf '{"kind":"Namespace","apiVersion":"v1","metadata":{"name":"%s"},"spec":{"finalizers":[]}}' "$NS")
+        curl -s -X PUT \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "Content-Type: application/json" \
+          "$HOST/api/v1/namespaces/$NS/finalize" \
+          -d "$FINAL_BODY" >/dev/null || true
         for i in $(seq 1 24); do
-          NS_CHECK=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS")
+          NS_CHECK=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS" || true)
           echo "$NS_CHECK" | grep -q '"code":404' && { echo "Namespace $NS deleted" >&2; break; }
           [ "$i" = "24" ] && { echo "ERROR: namespace $NS still exists after 120s" >&2; exit 1; }
           sleep 5
@@ -577,8 +584,15 @@ resource "null_resource" "flo_namespace" {
               -d '{"metadata":{"finalizers":[]}}' >/dev/null || true
           done
         done
+        # Force-remove the namespace kubernetes finalizer to unblock stuck deletions
+        FINAL_BODY=$(printf '{"kind":"Namespace","apiVersion":"v1","metadata":{"name":"%s"},"spec":{"finalizers":[]}}' "$NS")
+        curl -s -X PUT \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "Content-Type: application/json" \
+          "$HOST/api/v1/namespaces/$NS/finalize" \
+          -d "$FINAL_BODY" >/dev/null || true
         for i in $(seq 1 24); do
-          NS_CHECK=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS")
+          NS_CHECK=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS" || true)
           echo "$NS_CHECK" | grep -q '"code":404' && { echo "Namespace $NS deleted" >&2; break; }
           [ "$i" = "24" ] && { echo "ERROR: namespace $NS still exists after 120s" >&2; exit 1; }
           sleep 5
