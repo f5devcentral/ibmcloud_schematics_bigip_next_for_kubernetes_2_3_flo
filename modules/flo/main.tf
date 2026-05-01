@@ -478,24 +478,54 @@ resource "null_resource" "f5_utils" {
   provisioner "local-exec" {
     command = <<-EOT
       set -e
+      HOST="${var.kube_host}"
+      TOKEN="${var.kube_token}"
+      NS="${var.utils_namespace}"
+      NS_RESP=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS")
+      PHASE=$(echo "$NS_RESP" | grep -o '"phase":"[^"]*"' | cut -d'"' -f4 || true)
+      if [ "$PHASE" = "Terminating" ]; then
+        echo "Namespace $NS is Terminating - clearing stuck F5 CR finalizers" >&2
+        GV=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/apis/k8s.f5.com" \
+          | grep -o '"groupVersion":"k8s.f5.com/[^"]*"' | head -1 \
+          | sed 's|.*k8s.f5.com/||' | tr -d '"' || true)
+        if [ -z "$GV" ]; then GV="v1alpha1"; fi
+        for rtype in afms cnecontrollers cneinstances downloaders dssms f5tmms; do
+          NAMES=$(curl -s -H "Authorization: Bearer $TOKEN" \
+            "$HOST/apis/k8s.f5.com/$GV/namespaces/$NS/$rtype" \
+            | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || true)
+          for rname in $NAMES; do
+            echo "  Removing finalizers from $rtype/$rname" >&2
+            curl -s -X PATCH \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/merge-patch+json" \
+              "$HOST/apis/k8s.f5.com/$GV/namespaces/$NS/$rtype/$rname" \
+              -d '{"metadata":{"finalizers":[]}}' >/dev/null || true
+          done
+        done
+        for i in $(seq 1 24); do
+          NS_CHECK=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS")
+          echo "$NS_CHECK" | grep -q '"code":404' && { echo "Namespace $NS deleted" >&2; break; }
+          [ "$i" = "24" ] && { echo "ERROR: namespace $NS still exists after 120s" >&2; exit 1; }
+          sleep 5
+        done
+      fi
+      PATCH_BODY=$(printf '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"%s"}}' "$NS")
       BODY=$(curl -s -X PATCH \
-        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Authorization: Bearer $TOKEN" \
         -H "Content-Type: application/apply-patch+yaml" \
-        "${var.kube_host}/api/v1/namespaces/${var.utils_namespace}?fieldManager=terraform&force=true" \
-        -d '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"${var.utils_namespace}"}}')
+        "$HOST/api/v1/namespaces/$NS?fieldManager=terraform&force=true" \
+        -d "$PATCH_BODY")
       if ! echo "$BODY" | grep -q '"kind":"Namespace"'; then
         echo "ERROR: namespace PATCH failed: $BODY" >&2
         exit 1
       fi
       for i in $(seq 1 30); do
-        PHASE=$(curl -s \
-          -H "Authorization: Bearer ${var.kube_token}" \
-          "${var.kube_host}/api/v1/namespaces/${var.utils_namespace}" \
-          | grep -o '"phase":"[^"]*"' | cut -d'"' -f4)
+        PHASE=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS" \
+          | grep -o '"phase":"[^"]*"' | cut -d'"' -f4 || true)
         [ "$PHASE" = "Active" ] && exit 0
         sleep 2
       done
-      echo "ERROR: namespace ${var.utils_namespace} did not become Active within 60s" >&2
+      echo "ERROR: namespace $NS did not become Active within 60s" >&2
       exit 1
     EOT
   }
@@ -523,24 +553,54 @@ resource "null_resource" "flo_namespace" {
   provisioner "local-exec" {
     command = <<-EOT
       set -e
+      HOST="${var.kube_host}"
+      TOKEN="${var.kube_token}"
+      NS="${var.flo_namespace}"
+      NS_RESP=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS")
+      PHASE=$(echo "$NS_RESP" | grep -o '"phase":"[^"]*"' | cut -d'"' -f4 || true)
+      if [ "$PHASE" = "Terminating" ]; then
+        echo "Namespace $NS is Terminating - clearing stuck F5 CR finalizers" >&2
+        GV=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/apis/k8s.f5.com" \
+          | grep -o '"groupVersion":"k8s.f5.com/[^"]*"' | head -1 \
+          | sed 's|.*k8s.f5.com/||' | tr -d '"' || true)
+        if [ -z "$GV" ]; then GV="v1alpha1"; fi
+        for rtype in afms cnecontrollers cneinstances downloaders dssms f5tmms; do
+          NAMES=$(curl -s -H "Authorization: Bearer $TOKEN" \
+            "$HOST/apis/k8s.f5.com/$GV/namespaces/$NS/$rtype" \
+            | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || true)
+          for rname in $NAMES; do
+            echo "  Removing finalizers from $rtype/$rname" >&2
+            curl -s -X PATCH \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Content-Type: application/merge-patch+json" \
+              "$HOST/apis/k8s.f5.com/$GV/namespaces/$NS/$rtype/$rname" \
+              -d '{"metadata":{"finalizers":[]}}' >/dev/null || true
+          done
+        done
+        for i in $(seq 1 24); do
+          NS_CHECK=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS")
+          echo "$NS_CHECK" | grep -q '"code":404' && { echo "Namespace $NS deleted" >&2; break; }
+          [ "$i" = "24" ] && { echo "ERROR: namespace $NS still exists after 120s" >&2; exit 1; }
+          sleep 5
+        done
+      fi
+      PATCH_BODY=$(printf '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"%s"}}' "$NS")
       BODY=$(curl -s -X PATCH \
-        -H "Authorization: Bearer ${var.kube_token}" \
+        -H "Authorization: Bearer $TOKEN" \
         -H "Content-Type: application/apply-patch+yaml" \
-        "${var.kube_host}/api/v1/namespaces/${var.flo_namespace}?fieldManager=terraform&force=true" \
-        -d '{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"${var.flo_namespace}"}}')
+        "$HOST/api/v1/namespaces/$NS?fieldManager=terraform&force=true" \
+        -d "$PATCH_BODY")
       if ! echo "$BODY" | grep -q '"kind":"Namespace"'; then
         echo "ERROR: namespace PATCH failed: $BODY" >&2
         exit 1
       fi
       for i in $(seq 1 30); do
-        PHASE=$(curl -s \
-          -H "Authorization: Bearer ${var.kube_token}" \
-          "${var.kube_host}/api/v1/namespaces/${var.flo_namespace}" \
-          | grep -o '"phase":"[^"]*"' | cut -d'"' -f4)
+        PHASE=$(curl -s -H "Authorization: Bearer $TOKEN" "$HOST/api/v1/namespaces/$NS" \
+          | grep -o '"phase":"[^"]*"' | cut -d'"' -f4 || true)
         [ "$PHASE" = "Active" ] && exit 0
         sleep 2
       done
-      echo "ERROR: namespace ${var.flo_namespace} did not become Active within 60s" >&2
+      echo "ERROR: namespace $NS did not become Active within 60s" >&2
       exit 1
     EOT
   }
