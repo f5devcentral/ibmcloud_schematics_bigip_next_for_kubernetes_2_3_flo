@@ -478,7 +478,7 @@ resource "null_resource" "f5_utils" {
   provisioner "local-exec" {
     command = <<-EOT
       set -e
-      HTTP_CODE=$(curl -s -o /tmp/utils-ns-create-response.json -w "%{http_code}" -X PATCH \
+      HTTP_CODE=$(curl -s -o /tmp/utils-ns-create-response.json -w "%%{http_code}" -X PATCH \
         -H "Authorization: Bearer ${var.kube_token}" \
         -H "Content-Type: application/apply-patch+yaml" \
         "${var.kube_host}/api/v1/namespaces/${var.utils_namespace}?fieldManager=terraform&force=true" \
@@ -524,7 +524,7 @@ resource "null_resource" "flo_namespace" {
   provisioner "local-exec" {
     command = <<-EOT
       set -e
-      HTTP_CODE=$(curl -s -o /tmp/ns-create-response.json -w "%{http_code}" -X PATCH \
+      HTTP_CODE=$(curl -s -o /tmp/ns-create-response.json -w "%%{http_code}" -X PATCH \
         -H "Authorization: Bearer ${var.kube_token}" \
         -H "Content-Type: application/apply-patch+yaml" \
         "${var.kube_host}/api/v1/namespaces/${var.flo_namespace}?fieldManager=terraform&force=true" \
